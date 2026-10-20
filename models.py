@@ -6,13 +6,14 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 from torchvision import models as tv
-from transformers import AutoModelForAudioClassification, WhisperForAudioClassification
+from transformers import (ASTForAudioClassification, AutoModelForAudioClassification,
+                          WhisperForAudioClassification)
 from transformers.models.wav2vec2.modeling_wav2vec2 import _compute_mask_indices
 
 from common import LABELS
 
 NUM_CLASSES = len(LABELS)
-TRANSFORMER_MODES = {"raw", "whisper"}
+TRANSFORMER_MODES = {"raw", "whisper", "ast"}
 
 # Configuración de wav2vec2-base (todo lo ajustable está aquí).
 WAV2VEC_CONFIG = dict(
@@ -22,12 +23,12 @@ WAV2VEC_CONFIG = dict(
     mask_time_min_masks=0,
     mask_feature_prob=0.0,         # solo máscara temporal
     layerdrop=0.0,                 # sin stochastic depth: pocas muestras y pocas épocas
-    use_weighted_layer_sum=False,  # True = promedio ponderado de todas las capas
+    use_weighted_layer_sum=True,   # promedio ponderado de todas las capas (las intermedias rinden mejor que la última)
 )
-WAV2VEC_LR = {"encoder": 1e-5, "head": 1e-4}
+WAV2VEC_LR = {"encoder": 4e-5, "head": 5e-4}
 WAV2VEC_HEAD = ("projector.", "classifier.", "layer_weights")
 WAV2VEC_LABEL_SMOOTHING = 0.05
-OTHER_LR = {"whisper": 5e-5}  # el resto de modelos usa 1e-3
+OTHER_LR = {"whisper": 5e-5, "ast": 3e-5}  # el resto de modelos usa 1e-3
 
 
 def _masked_hidden_states(self, hidden_states, mask_time_indices=None, attention_mask=None):
@@ -80,20 +81,57 @@ def build_model(name):
             "facebook/wav2vec2-base", **labels, **WAV2VEC_CONFIG
         )
         model.freeze_feature_encoder()
+        if model.config.use_weighted_layer_sum:
+            # Parámetro nuevo: from_pretrained lo deja sin inicializar (valores basura/NaN).
+            with torch.no_grad():
+                model.layer_weights.fill_(1.0 / model.layer_weights.numel())
         model.wav2vec2._mask_hidden_states = MethodType(_masked_hidden_states, model.wav2vec2)
         return model, "raw"
 
     if name == "whisper":
         return WhisperForAudioClassification.from_pretrained("openai/whisper-tiny", **labels), "whisper"
 
+    if name == "ast":
+        # Preentrenado en AudioSet (527 clases): la cabeza se reemplaza por una de NUM_CLASSES.
+        model = ASTForAudioClassification.from_pretrained(
+            "MIT/ast-finetuned-audioset-10-10-0.4593", ignore_mismatched_sizes=True, **labels
+        )
+        return model, "ast"
+
     raise ValueError(f"Modelo no reconocido: {name}")
+
+
+def _wav2vec_logits(model, inputs):
+    """inputs: (B, 2, N) con la forma de onda y su máscara (1 = muestra real, 0 = relleno).
+
+    Mean-pooling solo sobre los frames reales para que el relleno no diluya la representación.
+    """
+    waveform, sample_mask = inputs[:, 0], inputs[:, 1]
+    weighted = model.config.use_weighted_layer_sum
+    outputs = model.wav2vec2(waveform, output_hidden_states=weighted)
+
+    if weighted:
+        stacked = torch.stack(outputs.hidden_states, dim=1)
+        weights = torch.softmax(model.layer_weights, dim=-1)
+        hidden = (stacked * weights.view(1, -1, 1, 1)).sum(dim=1)
+    else:
+        hidden = outputs.last_hidden_state
+    hidden = model.projector(hidden)
+
+    frames = model._get_feat_extract_output_lengths(sample_mask.sum(dim=1).long())
+    frame_mask = (torch.arange(hidden.shape[1], device=hidden.device)[None, :]
+                  < frames[:, None]).unsqueeze(-1).to(hidden.dtype)
+    pooled = (hidden * frame_mask).sum(dim=1) / frame_mask.sum(dim=1).clamp(min=1)
+    return model.classifier(pooled)
 
 
 def forward_logits(model, inputs, mode):
     if mode == "raw":
-        return model(input_values=inputs).logits
+        return _wav2vec_logits(model, inputs)
     if mode == "whisper":
         return model(input_features=inputs).logits
+    if mode == "ast":
+        return model(input_values=inputs).logits
     return model(inputs)
 
 

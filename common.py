@@ -18,7 +18,7 @@ LABELS = ["no_violence", "physical_violence", "verbal_violence"]
 LABEL_TO_ID = {label: i for i, label in enumerate(LABELS)}
 NO_VIOLENCE = LABEL_TO_ID["no_violence"]
 SPLITS = ("train", "val", "test")
-MODELS = ("mobilenet_v3", "resnet50", "densenet121", "whisper", "wav2vec")
+MODELS = ("mobilenet_v3", "resnet50", "densenet121", "whisper", "wav2vec", "ast")
 
 TARGET_SR = 16000
 FIXED_SAMPLES = TARGET_SR * 5

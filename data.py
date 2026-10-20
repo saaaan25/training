@@ -9,7 +9,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 import torchaudio
 from torch.utils.data import DataLoader, Dataset
-from transformers import WhisperFeatureExtractor
+from transformers import ASTFeatureExtractor, WhisperFeatureExtractor
 
 from common import FIXED_SAMPLES, LABEL_TO_ID, LABELS, TARGET_SR, seed_worker
 
@@ -18,7 +18,7 @@ IMAGENET_STD = torch.tensor([0.229, 0.224, 0.225]).view(3, 1, 1)
 
 
 class AudioDataset(Dataset):
-    """mode: 'spec' (mel 3 canales para CNN), 'raw' (wav2vec) o 'whisper'."""
+    """mode: 'spec' (mel 3 canales para CNN), 'raw' (wav2vec), 'whisper' o 'ast'."""
 
     def __init__(self, dataset_dir, split, mode):
         self.root = Path(dataset_dir)
@@ -39,6 +39,8 @@ class AudioDataset(Dataset):
         )
         self.whisper = (WhisperFeatureExtractor.from_pretrained("openai/whisper-tiny")
                         if mode == "whisper" else None)
+        self.ast = (ASTFeatureExtractor.from_pretrained("MIT/ast-finetuned-audioset-10-10-0.4593")
+                    if mode == "ast" else None)
 
     def __len__(self):
         return len(self.items)
@@ -64,15 +66,15 @@ class AudioDataset(Dataset):
         path, label = self.items[index]
         waveform = self.load_waveform(path)
 
-        if self.mode == "raw":
-            # Normalización de wav2vec2 sobre las muestras reales, antes del relleno.
-            waveform = (waveform - waveform.mean()) / torch.sqrt(
-                waveform.var(unbiased=False) + 1e-7
-            )
-        waveform = F.pad(waveform, (0, FIXED_SAMPLES - waveform.numel()))
+        valid = waveform.numel()
+        waveform = F.pad(waveform, (0, FIXED_SAMPLES - valid))
 
         if self.mode == "raw":
-            features = waveform
+            # Sin estandarización por audio (conserva la dinámica de volumen); la segunda
+            # fila marca las muestras reales para el pooling con máscara.
+            sample_mask = torch.zeros(FIXED_SAMPLES)
+            sample_mask[:valid] = 1.0
+            features = torch.stack([waveform, sample_mask])
         elif self.mode == "spec":
             mel = self.mel(waveform)
             mel = (mel - mel.min()) / (mel.max() - mel.min() + 1e-6)
@@ -81,6 +83,10 @@ class AudioDataset(Dataset):
             features = self.whisper(
                 waveform.numpy(), sampling_rate=TARGET_SR, return_tensors="pt"
             ).input_features.squeeze(0)
+        elif self.mode == "ast":
+            features = self.ast(
+                waveform.numpy(), sampling_rate=TARGET_SR, return_tensors="pt"
+            ).input_values.squeeze(0)
         else:
             raise ValueError(f"Modo no soportado: {self.mode}")
 

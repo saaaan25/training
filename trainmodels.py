@@ -8,7 +8,7 @@ Entrenar (todos los modelos o solo algunos):
 Evaluar en test (una sola vez por modelo, tras cerrar las decisiones con validación):
     python trainmodels.py --phase test --dataset-dir ../../dataset/final_dataset --output-dir ./final_results
 
-Modelos: mobilenet_v3, resnet50, densenet121, whisper, wav2vec.
+Modelos: mobilenet_v3, resnet50, densenet121, whisper, wav2vec, ast.
 El metadata por defecto es <dataset-dir>/metadata.csv; use --metadata-path para otro archivo.
 """
 
