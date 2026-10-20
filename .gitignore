@@ -1,0 +1,51 @@
+# Entornos y cachés de Python
+.venv/
+venv/
+env/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+*.egg-info/
+build/
+dist/
+
+# Resultados locales de entrenamiento y evaluación
+/semi_results/
+/final_results/
+/results/
+/*_results/
+checkpoints/
+*.pt
+*.pth
+*.ckpt
+*.safetensors
+
+# Copias locales de datasets y cachés de modelos
+/dataset/
+/datasets/
+/semi_dataset/
+/final_dataset/
+/.cache/
+/huggingface/
+/wandb/
+/runs/
+
+# Configuración local y credenciales
+.env
+.env.*
+!.env.example
+.vscode/
+.idea/
+
+# Archivos temporales del sistema y editores
+.DS_Store
+Thumbs.db
+Desktop.ini
+*.log
+*.tmp
+*.swp
+*~
