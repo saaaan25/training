@@ -9,16 +9,17 @@ import torch.nn as nn
 import torch.nn.functional as F
 import torchaudio
 from torch.utils.data import DataLoader, Dataset
-from transformers import ASTFeatureExtractor, WhisperFeatureExtractor
+from transformers import WhisperFeatureExtractor
 
-from common import FIXED_SAMPLES, LABEL_TO_ID, LABELS, TARGET_SR, seed_worker
+from common import (FIXED_SAMPLES, LABEL_TO_ID, LABELS, TARGET_SR, WHISPER_CHECKPOINT,
+                    seed_worker)
 
 IMAGENET_MEAN = torch.tensor([0.485, 0.456, 0.406]).view(3, 1, 1)
 IMAGENET_STD = torch.tensor([0.229, 0.224, 0.225]).view(3, 1, 1)
 
 
 class AudioDataset(Dataset):
-    """mode: 'spec' (mel 3 canales para CNN), 'raw' (wav2vec), 'whisper' o 'ast'."""
+    """mode: 'spec' (mel 3 canales para CNN), 'raw' (wav2vec), o 'whisper'."""
 
     def __init__(self, dataset_dir, split, mode):
         self.root = Path(dataset_dir)
@@ -37,10 +38,8 @@ class AudioDataset(Dataset):
             ),
             torchaudio.transforms.AmplitudeToDB(),
         )
-        self.whisper = (WhisperFeatureExtractor.from_pretrained("openai/whisper-tiny")
+        self.whisper = (WhisperFeatureExtractor.from_pretrained(WHISPER_CHECKPOINT)
                         if mode == "whisper" else None)
-        self.ast = (ASTFeatureExtractor.from_pretrained("MIT/ast-finetuned-audioset-10-10-0.4593")
-                    if mode == "ast" else None)
 
     def __len__(self):
         return len(self.items)
@@ -83,10 +82,6 @@ class AudioDataset(Dataset):
             features = self.whisper(
                 waveform.numpy(), sampling_rate=TARGET_SR, return_tensors="pt"
             ).input_features.squeeze(0)
-        elif self.mode == "ast":
-            features = self.ast(
-                waveform.numpy(), sampling_rate=TARGET_SR, return_tensors="pt"
-            ).input_values.squeeze(0)
         else:
             raise ValueError(f"Modo no soportado: {self.mode}")
 

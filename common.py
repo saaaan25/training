@@ -18,7 +18,15 @@ LABELS = ["no_violence", "physical_violence", "verbal_violence"]
 LABEL_TO_ID = {label: i for i, label in enumerate(LABELS)}
 NO_VIOLENCE = LABEL_TO_ID["no_violence"]
 SPLITS = ("train", "val", "test")
-MODELS = ("mobilenet_v3", "resnet50", "densenet121", "whisper", "wav2vec", "ast")
+MODELS = ("mobilenet_v3", "resnet50", "densenet121", "whisper", "wav2vec")
+
+# Checkpoint de Whisper. Para migrar entre tamaños basta cambiar esta línea:
+#   openai/whisper-tiny  (~8M params en el encoder)   openai/whisper-base  (~20M)
+#   openai/whisper-small (~88M)                       openai/whisper-medium (~300M, no cabe en 4 GB)
+# tiny/base/small/medium comparten el mismo extractor (80 mel bins); large-v3 usa 128.
+# Al cambiar de tamaño: usar otro --output-dir (los checkpoints no son intercambiables) y revisar
+# OTHER_LR["whisper"] en models.py (más grande = LR menor) y --batch-size si falta memoria.
+WHISPER_CHECKPOINT = "openai/whisper-small"
 
 TARGET_SR = 16000
 FIXED_SAMPLES = TARGET_SR * 5

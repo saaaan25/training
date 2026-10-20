@@ -6,16 +6,15 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 from torchvision import models as tv
-from transformers import (ASTForAudioClassification, AutoModelForAudioClassification,
-                          WhisperForAudioClassification)
+from transformers import AutoModelForAudioClassification, WhisperForAudioClassification
 from transformers.models.wav2vec2.modeling_wav2vec2 import _compute_mask_indices
 
-from common import LABELS
+from common import LABELS, WHISPER_CHECKPOINT
 
 NUM_CLASSES = len(LABELS)
-TRANSFORMER_MODES = {"raw", "whisper", "ast"}
+TRANSFORMER_MODES = {"raw", "whisper"}
 
-# Configuración de wav2vec2-base (todo lo ajustable está aquí).
+# Configuración de wav2vec2-large-xlsr-53 (todo lo ajustable está aquí).
 WAV2VEC_CONFIG = dict(
     apply_spec_augment=True,       # SpecAugment temporal
     mask_time_prob=0.05,
@@ -25,10 +24,11 @@ WAV2VEC_CONFIG = dict(
     layerdrop=0.0,                 # sin stochastic depth: pocas muestras y pocas épocas
     use_weighted_layer_sum=True,   # promedio ponderado de todas las capas (las intermedias rinden mejor que la última)
 )
+WAV2VEC_CHECKPOINT = "facebook/wav2vec2-large-xlsr-53"
 WAV2VEC_LR = {"encoder": 4e-5, "head": 5e-4}
 WAV2VEC_HEAD = ("projector.", "classifier.", "layer_weights")
 WAV2VEC_LABEL_SMOOTHING = 0.05
-OTHER_LR = {"whisper": 5e-5, "ast": 3e-5}  # el resto de modelos usa 1e-3
+OTHER_LR = {"whisper": 5e-5}  # el resto de modelos usa 1e-3
 
 
 def _masked_hidden_states(self, hidden_states, mask_time_indices=None, attention_mask=None):
@@ -78,7 +78,7 @@ def build_model(name):
 
     if name == "wav2vec":
         model = AutoModelForAudioClassification.from_pretrained(
-            "facebook/wav2vec2-base", **labels, **WAV2VEC_CONFIG
+            WAV2VEC_CHECKPOINT, **labels, **WAV2VEC_CONFIG
         )
         model.freeze_feature_encoder()
         if model.config.use_weighted_layer_sum:
@@ -89,14 +89,7 @@ def build_model(name):
         return model, "raw"
 
     if name == "whisper":
-        return WhisperForAudioClassification.from_pretrained("openai/whisper-tiny", **labels), "whisper"
-
-    if name == "ast":
-        # Preentrenado en AudioSet (527 clases): la cabeza se reemplaza por una de NUM_CLASSES.
-        model = ASTForAudioClassification.from_pretrained(
-            "MIT/ast-finetuned-audioset-10-10-0.4593", ignore_mismatched_sizes=True, **labels
-        )
-        return model, "ast"
+        return WhisperForAudioClassification.from_pretrained(WHISPER_CHECKPOINT, **labels), "whisper"
 
     raise ValueError(f"Modelo no reconocido: {name}")
 
@@ -130,8 +123,6 @@ def forward_logits(model, inputs, mode):
         return _wav2vec_logits(model, inputs)
     if mode == "whisper":
         return model(input_features=inputs).logits
-    if mode == "ast":
-        return model(input_values=inputs).logits
     return model(inputs)
 
 
