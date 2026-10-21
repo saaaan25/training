@@ -154,7 +154,13 @@ python trainmodels.py --phase train --dataset-dir ../../dataset/final_dataset --
 ```
 
 Al iniciar verás `Dispositivo: cuda (...)` o `Dispositivo: cpu`.
-`--models` acepta varios nombres separados por espacios. Usa otro `--output-dir`
+`--models` acepta varios nombres separados por espacios.
+Al especificar `--models`, la salida muestra únicamente los modelos indicados,
+en el orden solicitado, sin ranking ni generación de resúmenes globales. En test,
+`--best-only` restringe además la selección al mejor de los modelos indicados.
+Si se omite `--models`, se conserva el resumen general del directorio.
+
+Usa otro `--output-dir`
 para repetir un experimento: el programa bloquea modelos ya entrenados en el mismo
 directorio. La salida por época aparece al terminar entrenamiento y validación
 de esa época; no hay barra de progreso por lote.

@@ -66,6 +66,11 @@ class AudioDataset(Dataset):
         waveform = self.load_waveform(path)
 
         valid = waveform.numel()
+        if self.mode == "raw":
+            # Estandariza solo audio real; el padding permanece en cero.
+            waveform = (waveform - waveform.mean()) / torch.sqrt(
+                waveform.var(unbiased=False) + 1e-7
+            )
         waveform = F.pad(waveform, (0, FIXED_SAMPLES - valid))
 
         if self.mode == "raw":

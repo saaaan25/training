@@ -10,6 +10,11 @@ Evaluar en test (una sola vez por modelo, tras cerrar las decisiones con validac
 
 Modelos: mobilenet_v3, resnet50, densenet121, whisper, wav2vec.
 El metadata por defecto es <dataset-dir>/metadata.csv; use --metadata-path para otro archivo.
+
+
+python trainmodels.py --phase train --dataset-dir ../../dataset/semi_dataset --output-dir ./semi_results --epochs 15 --models wav2vec
+
+python trainmodels.py --phase train --dataset-dir ../../dataset/final_dataset --output-dir ./final_results --epochs 15 --models wav2vec
 """
 
 import argparse
@@ -32,13 +37,17 @@ def parse_args():
     parser.add_argument("--source-group-column", default="source_group",
                         help="Si falta, se usa source_parent.")
     parser.add_argument("--models", nargs="+", choices=MODELS, default=None,
-                        help="Por defecto: todos (train) o todos los ya entrenados (test).")
+                        help="Procesa y muestra solo los modelos indicados, sin ranking general. "
+                             "Si se omite: todos (train) o todos los ya entrenados (test), "
+                             "con resumen general.")
     parser.add_argument("--best-only", action="store_true",
                         help="En test: evalúa solo el mejor modelo según validación.")
     parser.add_argument("--epochs", type=int, default=10)
     parser.add_argument("--batch-size", type=int, default=8)
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--num-workers", type=int, default=0)
+    parser.add_argument("--wav2vec-spec-augment", action=argparse.BooleanOptionalAction, default=True,
+                        help="Activa o desactiva SpecAugment en Wav2Vec2; en test se restaura el valor guardado.")
     parser.add_argument("--bootstrap-iterations", type=int, default=1000)
     parser.add_argument("--expected-per-class", type=int, nargs=3, metavar=("TRAIN", "VAL", "TEST"),
                         help="Conteo esperado por clase. Se infiere en semi_dataset y final_dataset.")

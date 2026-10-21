@@ -26,7 +26,7 @@ MODELS = ("mobilenet_v3", "resnet50", "densenet121", "whisper", "wav2vec")
 # tiny/base/small/medium comparten el mismo extractor (80 mel bins); large-v3 usa 128.
 # Al cambiar de tamaño: usar otro --output-dir (los checkpoints no son intercambiables) y revisar
 # OTHER_LR["whisper"] en models.py (más grande = LR menor) y --batch-size si falta memoria.
-WHISPER_CHECKPOINT = "openai/whisper-small"
+WHISPER_CHECKPOINT = "openai/whisper-tiny"
 
 TARGET_SR = 16000
 FIXED_SAMPLES = TARGET_SR * 5

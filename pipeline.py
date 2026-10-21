@@ -19,7 +19,7 @@ from data import make_loader
 from metrics import (CLASS_IDS, binary_metrics, bootstrap_ci, choose_threshold,
                      class_report, epoch_metrics)
 from models import (TRANSFORMER_MODES, build_model, build_optimizer, forward_logits,
-                    label_smoothing)
+                    label_smoothing, WAV2VEC_CHECKPOINT, WAV2VEC_CONFIG, WAV2VEC_LR)
 
 
 def validation_path(out, name):
@@ -73,7 +73,7 @@ def train_model(name, args, device, audit):
     out = args.output_dir
     set_seed(args.seed)
 
-    model, mode = build_model(name)
+    model, mode = build_model(name, wav2vec_spec_augment=args.wav2vec_spec_augment)
     model.to(device)
     train_loader = make_loader(args, "train", mode, shuffle=True)
     val_loader = make_loader(args, "val", mode, shuffle=False)
@@ -124,6 +124,11 @@ def train_model(name, args, device, audit):
     _, val_probs, val_labels = run_epoch(model, val_loader, device, mode, eval_criterion)
     threshold, threshold_table = choose_threshold(val_probs, val_labels)
     (out / "validation").mkdir(parents=True, exist_ok=True)
+    pd.DataFrame({
+        "relative_path": val_loader.dataset.relative_paths(),
+        "true_label": [LABELS[i] for i in val_labels],
+        **{f"prob_{label}": val_probs[:, i] for i, label in enumerate(LABELS)},
+    }).to_csv(out / "validation" / f"{name}_predictions.csv", index=False)
     threshold_table.to_csv(out / "validation" / f"{name}_threshold_search.csv", index=False)
 
     write_json(validation_path(out, name), {
@@ -141,6 +146,12 @@ def train_model(name, args, device, audit):
         "training_arguments": {
             "epochs": args.epochs, "batch_size": args.batch_size, "seed": args.seed,
             "label_smoothing": label_smoothing(name),
+            "wav2vec_settings": ({
+                "checkpoint": WAV2VEC_CHECKPOINT,
+                "config": {**WAV2VEC_CONFIG, "apply_spec_augment": args.wav2vec_spec_augment},
+                "learning_rates": WAV2VEC_LR,
+                "preprocessing": "valid_samples_zero_mean_unit_variance_v1",
+            } if name == "wav2vec" else None),
         },
         "environment": environment_versions(),
     })
@@ -150,9 +161,11 @@ def train_model(name, args, device, audit):
         torch.cuda.empty_cache()
 
 
-def leaderboard(out):
+def leaderboard(out, names=None):
     rows = []
-    for path in sorted((out / "validation").glob("*.json")):
+    paths = (sorted((out / "validation").glob("*.json")) if names is None
+             else [validation_path(out, name) for name in names])
+    for path in paths:
         record = read_json(path)
         rows.append({
             "model": record["model"],
@@ -161,11 +174,13 @@ def leaderboard(out):
             "alert_threshold": record["threshold"]["threshold"],
         })
 
-    table = pd.DataFrame(rows).sort_values(
-        ["val_f1_macro", "val_f1_weighted", "val_accuracy", "val_loss"],
-        ascending=[False, False, False, True], kind="mergesort",
-    ).reset_index(drop=True)
-    table.to_csv(out / "validation_leaderboard.csv", index=False)
+    table = pd.DataFrame(rows)
+    if names is None:
+        table = table.sort_values(
+            ["val_f1_macro", "val_f1_weighted", "val_accuracy", "val_loss"],
+            ascending=[False, False, False, True], kind="mergesort",
+        ).reset_index(drop=True)
+        table.to_csv(out / "validation_leaderboard.csv", index=False)
     return table
 
 
@@ -187,8 +202,11 @@ def run_train(args, device, audit):
         print(f"\n>>> Entrenando {name}", flush=True)
         train_model(name, args, device, audit)
 
-    print("\nRanking en validación (todos los modelos entrenados en este directorio):")
-    print(leaderboard(out).to_string(index=False, float_format="%.4f"))
+    if args.models is None:
+        print("\nRanking en validación (todos los modelos entrenados en este directorio):")
+    else:
+        print("\nResultados en validación de los modelos seleccionados:")
+    print(leaderboard(out, args.models).to_string(index=False, float_format="%.4f"))
     print(f"\nEntrenamiento finalizado sin tocar test. Resultados en: {out.resolve()}")
 
 
@@ -222,7 +240,19 @@ def test_model(name, args, device, audit):
     if record["dataset_fingerprint"] != audit["dataset_fingerprint"]:
         raise ValueError("El corpus actual no coincide con el usado en el entrenamiento.")
 
-    model, mode = build_model(name)
+    spec_augment = None
+    if name == "wav2vec":
+        settings = record["training_arguments"].get("wav2vec_settings") or {}
+        spec_augment = settings.get("config", {}).get("apply_spec_augment")
+        expected = {
+            "checkpoint": WAV2VEC_CHECKPOINT,
+            "config": {**WAV2VEC_CONFIG, "apply_spec_augment": spec_augment},
+            "learning_rates": WAV2VEC_LR,
+            "preprocessing": "valid_samples_zero_mean_unit_variance_v1",
+        }
+        if record["training_arguments"].get("wav2vec_settings") != expected:
+            raise ValueError("La configuraci?n Wav2Vec2 difiere del entrenamiento. Use pesos y configuraci?n de la misma ejecuci?n.")
+    model, mode = build_model(name, wav2vec_spec_augment=spec_augment)
     load_frozen_weights(model, record, device)
 
     loader = make_loader(args, "test", mode, shuffle=False)
@@ -277,9 +307,11 @@ def test_model(name, args, device, audit):
         torch.cuda.empty_cache()
 
 
-def test_summary(out):
+def test_summary(out, names=None):
     rows = []
-    for path in sorted((out / "test").glob("*/final_metrics.json")):
+    paths = (sorted((out / "test").glob("*/final_metrics.json")) if names is None
+             else [test_dir(out, name) / "final_metrics.json" for name in names])
+    for path in paths:
         result = read_json(path)
         multiclass, binary = result["test_multiclass_metrics"], result["test_binary_alert_metrics"]
         rows.append({
@@ -291,8 +323,10 @@ def test_summary(out):
             "alert_f1": binary["f1"],
             "alert_fpr": binary["fpr"],
         })
-    table = pd.DataFrame(rows).sort_values("f1_macro", ascending=False).reset_index(drop=True)
-    table.to_csv(out / "test_summary.csv", index=False)
+    table = pd.DataFrame(rows)
+    if names is None:
+        table = table.sort_values("f1_macro", ascending=False).reset_index(drop=True)
+        table.to_csv(out / "test_summary.csv", index=False)
     return table
 
 
@@ -301,9 +335,12 @@ def run_test(args, device, audit):
     trained = [n for n in MODELS if validation_path(out, n).is_file()]
     names = args.models or trained
 
-    if args.best_only:
-        ranking = leaderboard(out)["model"].tolist()
-        names = [n for n in ranking if n in names][:1]
+    if args.best_only and names:
+        ranking = leaderboard(out, names).sort_values(
+            ["val_f1_macro", "val_f1_weighted", "val_accuracy", "val_loss"],
+            ascending=[False, False, False, True], kind="mergesort",
+        )["model"].tolist()
+        names = ranking[:1]
     if not names:
         raise FileNotFoundError(f"No hay modelos entrenados en {out}. Ejecute primero --phase train.")
 
@@ -313,6 +350,10 @@ def run_test(args, device, audit):
         print(f"\n>>> Evaluando en test: {name}", flush=True)
         test_model(name, args, device, audit)
 
-    print("\nResultados en test (todos los modelos evaluados en este directorio):")
-    print(test_summary(out).to_string(index=False, float_format="%.4f"))
+    if args.models is None:
+        print("\nResultados en test (todos los modelos evaluados en este directorio):")
+    else:
+        print("\nResultados en test de los modelos seleccionados:")
+    print(test_summary(out, names if args.models is not None else None).to_string(
+        index=False, float_format="%.4f"))
     print(f"\nDetalle por modelo en: {(out / 'test').resolve()}")

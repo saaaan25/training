@@ -14,7 +14,7 @@ from common import LABELS, WHISPER_CHECKPOINT
 NUM_CLASSES = len(LABELS)
 TRANSFORMER_MODES = {"raw", "whisper"}
 
-# Configuración de wav2vec2-large-xlsr-53 (todo lo ajustable está aquí).
+# Configuración de Wav2Vec2 Base (todo lo ajustable está aquí).
 WAV2VEC_CONFIG = dict(
     apply_spec_augment=True,       # SpecAugment temporal
     mask_time_prob=0.05,
@@ -24,8 +24,8 @@ WAV2VEC_CONFIG = dict(
     layerdrop=0.0,                 # sin stochastic depth: pocas muestras y pocas épocas
     use_weighted_layer_sum=True,   # promedio ponderado de todas las capas (las intermedias rinden mejor que la última)
 )
-WAV2VEC_CHECKPOINT = "facebook/wav2vec2-large-xlsr-53"
-WAV2VEC_LR = {"encoder": 4e-5, "head": 5e-4}
+WAV2VEC_CHECKPOINT = "facebook/wav2vec2-base"
+WAV2VEC_LR = {"encoder": 2e-5, "head": 2e-4}
 WAV2VEC_HEAD = ("projector.", "classifier.", "layer_weights")
 WAV2VEC_LABEL_SMOOTHING = 0.05
 OTHER_LR = {"whisper": 5e-5}  # el resto de modelos usa 1e-3
@@ -64,7 +64,7 @@ def _build_vision(name):
     return model
 
 
-def build_model(name):
+def build_model(name, wav2vec_spec_augment=None):
     """Devuelve (modelo, modo_de_entrada)."""
     labels = dict(
         num_labels=NUM_CLASSES,
@@ -77,8 +77,11 @@ def build_model(name):
         return _build_vision(name), "spec"
 
     if name == "wav2vec":
+        config = dict(WAV2VEC_CONFIG)
+        if wav2vec_spec_augment is not None:
+            config["apply_spec_augment"] = wav2vec_spec_augment
         model = AutoModelForAudioClassification.from_pretrained(
-            WAV2VEC_CHECKPOINT, **labels, **WAV2VEC_CONFIG
+            WAV2VEC_CHECKPOINT, **labels, **config
         )
         model.freeze_feature_encoder()
         if model.config.use_weighted_layer_sum:
@@ -101,7 +104,10 @@ def _wav2vec_logits(model, inputs):
     """
     waveform, sample_mask = inputs[:, 0], inputs[:, 1]
     weighted = model.config.use_weighted_layer_sum
-    outputs = model.wav2vec2(waveform, output_hidden_states=weighted)
+    attention_mask = sample_mask.long() if model.config.feat_extract_norm == "layer" else None
+    outputs = model.wav2vec2(
+        waveform, attention_mask=attention_mask, output_hidden_states=weighted
+    )
 
     if weighted:
         stacked = torch.stack(outputs.hidden_states, dim=1)
@@ -112,6 +118,8 @@ def _wav2vec_logits(model, inputs):
     hidden = model.projector(hidden)
 
     frames = model._get_feat_extract_output_lengths(sample_mask.sum(dim=1).long())
+    if (frames <= 0).any():
+        raise ValueError("Audio demasiado corto para producir frames v?lidos de Wav2Vec2.")
     frame_mask = (torch.arange(hidden.shape[1], device=hidden.device)[None, :]
                   < frames[:, None]).unsqueeze(-1).to(hidden.dtype)
     pooled = (hidden * frame_mask).sum(dim=1) / frame_mask.sum(dim=1).clamp(min=1)
